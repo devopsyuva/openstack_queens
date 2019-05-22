@@ -1,0 +1,59 @@
+---
+- hosts: controller
+  become: yes
+  tasks:
+    - name: Create keystone database
+      mysql_db:
+        login_host: "{{ hostvars['controller']['ansible_enp0s3']['ipv4']['address'] }}"
+        login_user: root
+        login_password: root
+        name: keystone
+        state: present
+
+    - name: Create keystone user and set permissions
+      mysql_user:
+        login_host: "{{ hostvars['controller']['ansible_enp0s3']['ipv4']['address'] }}"
+        login_user: root
+        login_password: root
+        name: keystone
+        priv: '*.*:ALL,GRANT'
+        state: present
+        host: ['localhost', '%']
+
+    - name: Install keystone packages
+      apt:
+        name: ['keystone', 'apache2', 'libapache2-mod-wsgi']
+        state: present
+
+    - name: Update /etc/keystone/keystone.conf config file
+      ini_file:
+        path: /etc/keystone/keystone.conf
+        section: "{{ item.section }}"
+        option: "{{ item.option }}"
+        value: "{{ item.value }}"
+        backup: yes
+      with_items:
+        - { section: 'database', option: 'connection', value: "mysql+pymysql://keystone:root@{{ hostvars['controller']['ansible_enp0s3']['ipv4']['address'] }}/keystone" }
+        - { section: 'token', option: 'provider', value: "fernet" }
+
+    - name: sync keystone DB
+      command: su -s /bin/sh -c "keystone-manage db_sync" keystone
+      become_method: su
+      tags: test_db
+      ignore_errors: yes
+
+    - name: Initialize Fernet key repositories
+      shell: "{{ item }}"
+      with_items:
+        - "keystone-manage credential_setup --keystone-user keystone --keystone-group keystone"
+        - "keystone-manage fernet_setup --keystone-user keystone --keystone-group keystone"
+
+    - name: BootStrap Identity service
+      shell: >
+        keystone-manage bootstrap --bootstrap-password root
+        --bootstrap-admin-url http://{{ hostvars['controller']['ansible_enp0s3']['ipv4']['address'] }}:5000/v3/
+        --bootstrap-internal-url http://{{ hostvars['controller']['ansible_enp0s3']['ipv4']['address'] }}:5000/v3/
+        --bootstrap-public-url http://{{ hostvars['controller']['ansible_enp0s3']['ipv4']['address'] }}:5000/v3/
+        --bootstrap-region-id RegionOne
+      args:
+        executable: /bin/bash

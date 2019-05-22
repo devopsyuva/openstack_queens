@@ -1,0 +1,21 @@
+---
+- hosts: controller
+  become: yes
+  tasks:
+    - name: Install memecache package on controller
+      apt:
+        name: ['memcached', 'python-memcache']
+        state: present
+
+    - name: update memcached.conf with controller management IP address
+      lineinfile:
+        path: /etc/memcached.conf
+        regexp: '^-l 127.0.0.1'
+        line: "-l {{ hostvars['controller']['ansible_enp0s3']['ipv4']['address'] }}"
+      notify: restart memcached service
+
+  handlers:
+    - name: restart memcached service
+      systemd:
+        name: memcached
+        state: present

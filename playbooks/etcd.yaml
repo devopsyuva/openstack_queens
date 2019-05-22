@@ -1,0 +1,21 @@
+---
+- hosts: controller
+  become: yes
+  tasks:
+    - name: Install etcd pakages on controller node
+      apt:
+        name: etcd
+        state: present
+
+    - name: Update etcd file with necessary key-values
+      template:
+        src: etcd.j2
+        dest: /etc/default/etcd
+      notify: restart etcd service
+
+  handlers:
+    - name: restart etcd service
+      systemd:
+        name: etcd
+        state: restarted
+        enable: yes
