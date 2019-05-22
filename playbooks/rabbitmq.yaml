@@ -1,0 +1,21 @@
+---
+- hosts: controller
+  become: yes
+  vars:
+    - rabbitmq_password: "root"
+  tasks:
+    - name: Install rabbitmq package
+      apt:
+        name: rabbitmq-server
+        state: present
+
+    - name: add user and set permissions
+      rabbitmq_user:
+        user: openstack
+        password: "{{ rabbitmq_password }}"
+        permissions:
+          - vhost: /
+            configure_priv: .*
+            read_priv: .*
+            write_priv: .*
+        state: present

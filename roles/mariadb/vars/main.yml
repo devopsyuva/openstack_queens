@@ -1,0 +1,3 @@
+---
+# vars file for roles/mariadb
+root_db_password: root
