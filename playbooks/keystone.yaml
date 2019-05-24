@@ -1,6 +1,9 @@
 ---
 - hosts: controller
   become: yes
+  vars:
+    - demo_user_password: 'demo'
+    - keystone_db_password: 'root'
   tasks:
     - name: Create keystone database
       mysql_db:
@@ -16,6 +19,7 @@
         login_user: root
         login_password: root
         name: keystone
+        password: "{{ keystone_db_password }}"
         priv: '*.*:ALL,GRANT'
         state: present
         host: ['localhost', '%']
@@ -57,3 +61,26 @@
         --bootstrap-region-id RegionOne
       args:
         executable: /bin/bash
+      ignore_errors: yes
+
+    - name: configure the ServerName option to reference the controller node
+      lineinfile:
+        path: /etc/apache2/apache2.conf
+        line: "ServerName {{ hostvars['controller']['ansible_enp0s3']['ipv4']['address'] }}"
+        backup: yes
+      notify: restart apache2 service
+
+    - name: Configure the administrative account
+      template:
+        src: admin_acc.sh.j2
+        dest: /tmp/admin_acc.sh
+        mode: '700'
+
+    - name: Execute administrative script
+      shell: bash /tmp/admin_acc.sh
+
+  handlers:
+    - name: restart apache2 service
+      systemd:
+        name: apache2
+        state: restarted

@@ -1,0 +1,119 @@
+---
+- hosts: controller
+  become: yes
+  vars:
+    - glancedb_user_password: 'root'
+    - glance_user_password: 'root'
+  tasks:
+    - name: Create glance database
+      mysql_db:
+        login_host: "{{ hostvars['controller']['ansible_enp0s3']['ipv4']['address'] }}"
+        login_user: root
+        login_password: root
+        name: glance
+        state: present
+
+    - name: Create glance user and set permissions
+      mysql_user:
+        login_host: "{{ hostvars['controller']['ansible_enp0s3']['ipv4']['address'] }}"
+        login_user: root
+        login_password: root
+        name: glance
+        password: "{{ glancedb_user_password }}"
+        priv: '*.*:ALL,GRANT'
+        state: present
+        host: "{{ item }}"
+      with_items:
+        - 'localhost'
+        - '%'
+      ignore_errors: yes
+
+    - name: copy admin-openrc file
+      template:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        mode: 700
+      with_items:
+        - { src: 'admin-openrc.j2', dest: '/tmp/admin-openrc' }
+        - { src: 'glance_service.sh.j2', dest: '/tmp/glance_service.sh' }
+        
+
+    - name: run admin-openrc script
+      shell: bash "{{ item }}"
+      with_items:
+        - '/tmp/admin-openrc'
+        - '/tmp/glance_service.sh'
+      tags: images
+      ignore_errors: yes
+
+    - name: Install glance package
+      apt:
+        name: glance
+        state: present
+
+    - name: Update /etc/glance/glance-api.conf file
+      ini_file:
+        path: /etc/glance/glance-api.conf
+        section: "{{ item.section }}"
+        option: "{{ item.option }}"
+        value: "{{ item.value }}"
+      with_items:
+        - { section: 'database', option: 'connection', value: "mysql+pymysql://glance:{{ glancedb_user_password }}@{{ hostvars['controller']['ansible_enp0s3']['ipv4']['address'] }}/glance" }
+        - { section: 'keystone_authtoken', option: 'auth_uri', value: "http://{{ hostvars['controller']['ansible_enp0s3']['ipv4']['address'] }}:5000" }
+        - { section: 'keystone_authtoken', option: 'auth_url', value: "http://{{ hostvars['controller']['ansible_enp0s3']['ipv4']['address'] }}:5000" }
+        - { section: 'keystone_authtoken', option: 'memcached_servers', value: "{{ hostvars['controller']['ansible_enp0s3']['ipv4']['address'] }}:11211" }
+        - { section: 'keystone_authtoken', option: 'auth_type', value: "password" }
+        - { section: 'keystone_authtoken', option: 'project_domain_name', value: "Default" }
+        - { section: 'keystone_authtoken', option: 'user_domain_name', value: "Default" }
+        - { section: 'keystone_authtoken', option: 'project_name', value: "service" }
+        - { section: 'keystone_authtoken', option: 'username', value: "glance" }
+        - { section: 'keystone_authtoken', option: 'password', value: "{{ glance_user_password }}" }
+        - { section: 'paste_deploy', option: 'flavor', value: "keystone" }
+        - { section: 'glance_store', option: 'stores', value: "file,http" }
+        - { section: 'glance_store', option: 'default_store', value: "file" }
+        - { section: 'glance_store', option: 'filesystem_store_datadir', value: "/var/lib/glance/images/" }
+      notify: restart glance services
+
+
+    - name: Update /etc/glance/glance-registry.conf  file
+      ini_file:
+        path: /etc/glance/glance-registry.conf
+        section: "{{ item.section }}"
+        option: "{{ item.option }}"
+        value: "{{ item.value }}"
+      with_items:
+        - { section: 'database', option: 'connection', value: "mysql+pymysql://glance:{{ glancedb_user_password }}@{{ hostvars['controller']['ansible_enp0s3']['ipv4']['address'] }}/glance" }
+        - { section: 'keystone_authtoken', option: 'auth_uri', value: "http://{{ hostvars['controller']['ansible_enp0s3']['ipv4']['address'] }}:5000" }
+        - { section: 'keystone_authtoken', option: 'auth_url', value: "http://{{ hostvars['controller']['ansible_enp0s3']['ipv4']['address'] }}:5000" }
+        - { section: 'keystone_authtoken', option: 'memcached_servers', value: "{{ hostvars['controller']['ansible_enp0s3']['ipv4']['address'] }}:11211" }
+        - { section: 'keystone_authtoken', option: 'auth_type', value: "password" }
+        - { section: 'keystone_authtoken', option: 'project_domain_name', value: "Default" }
+        - { section: 'keystone_authtoken', option: 'user_domain_name', value: "Default" }
+        - { section: 'keystone_authtoken', option: 'project_name', value: "service" }
+        - { section: 'keystone_authtoken', option: 'username', value: "glance" }
+        - { section: 'keystone_authtoken', option: 'password', value: "{{ glance_user_password }}" }
+        - { section: 'paste_deploy', option: 'flavor', value: "keystone" }
+      notify: restart glance services
+
+    - name: glance db sync
+      shell: su -s /bin/sh -c "glance-manage db_sync" glance
+      become_method: su
+
+    - name: Download Cirros image
+      get_url:
+        url: http://download.cirros-cloud.net/0.4.0/cirros-0.4.0-x86_64-disk.img
+        dest: /tmp/cirros-0.4.0-x86_64-disk.img
+      tags: images
+
+    - name: Upload Cirros image to glance
+      shell: >
+        openstack image create "cirros" \
+        --file /tmp/cirros-0.4.0-x86_64-disk.img \
+        --disk-format qcow2 --container-format bare \
+        --public
+      tags: images
+
+  handlers:
+    - name: restart glance services
+      systemd:
+        name: ['glance-api', 'glance-registry']
